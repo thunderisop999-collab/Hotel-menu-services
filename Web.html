@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Restaurant Menu (Simple)</title>
+<style>
+  :root{
+    --bg:#fff6e6;
+    --accent:#ff8c00;
+    --card:#ffffff;
+    --muted:#f2f2f2;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial;
+    background: linear-gradient(180deg,var(--bg), #ffe7b8 140%);
+    color:#222;
+  }
+  header{
+    background:var(--accent);
+    color:#fff;
+    padding:14px;
+    text-align:center;
+    font-weight:700;
+    letter-spacing:0.6px;
+  }
+  main{ max-width:920px; margin:14px auto; padding:12px; }
+
+  /* container with internal scroll so page remains compact */
+  .menu-wrap{ background:transparent; border-radius:10px; padding:6px; }
+  #menu{ display:flex; flex-direction:column; gap:12px; max-height: calc(100vh - 230px); overflow:auto; padding:6px; }
+
+  .item{
+    display:grid;
+    grid-template-columns:64px 1fr 100px 84px 80px;
+    gap:10px;
+    align-items:center;
+    background:var(--card);
+    padding:10px;
+    border-radius:10px;
+    box-shadow:0 4px 12px rgba(0,0,0,0.06);
+  }
+  .thumb{ width:64px; height:64px; border-radius:8px; overflow:hidden; background:#f7f7f7; display:flex; align-items:center; justify-content:center; }
+  .thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+
+  .col{ display:flex; flex-direction:column; gap:6px; }
+  label{ font-size:12px; color:#666; margin-left:4px; }
+  input[type="text"], input[type="number"]{
+    padding:8px; border-radius:8px; border:1px solid #e9e9e9; font-size:15px; background:transparent;
+  }
+  input[readonly]{ background:transparent; color:#111; }
+
+  .actions{ display:flex; gap:8px; justify-content:flex-end; }
+  button{ padding:9px 12px; border-radius:8px; border:none; background:var(--accent); color:white; font-weight:700; cursor:pointer; }
+  button.ghost{ background:transparent; color:var(--accent); border:2px solid rgba(255,140,0,0.12); font-weight:700; }
+  button.del{ background:#e24b3b; }
+
+  .admin-controls{ display:flex; gap:8px; justify-content:center; margin-top:12px; margin-bottom:6px; }
+
+  .card{ background:var(--card); padding:12px; border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,0.04); margin-bottom:12px; }
+
+  /* hide file input UI; we use a custom upload label */
+  input[type="file"]{ display:none; }
+
+  @media (max-width:720px){
+    .item{ grid-template-columns:84px 1fr auto; grid-template-rows: auto auto; gap:8px; }
+    .thumb{ grid-column:1/2; grid-row:1/3; width:84px; height:84px; margin-right:6px; }
+    .col.food{ grid-column:2/4; grid-row:1/1; }
+    .col.price{ grid-column:2/3; grid-row:2/2; }
+    .col.qty{ grid-column:3/4; grid-row:2/2; }
+    .actions{ grid-column:4/5; grid-row:1/2; }
+  }
+</style>
+</head>
+<body>
+<header>Restaurant Menu</header>
+<main>
+  <div class="menu-wrap">
+    <div id="menu" aria-live="polite"></div>
+  </div>
+
+  <div class="admin-controls" id="adminControls" style="display:none;">
+    <button id="addBtn">+ Add Item</button>
+    <button id="exitBtn" class="ghost">Exit Admin</button>
+    <button id="changePassToggle" class="ghost">Change Password</button>
+  </div>
+
+  <div id="authArea" class="card" style="text-align:center;">
+    <div style="margin-bottom:8px;"><strong>Owner Sign-in</strong></div>
+    <input id="passInput" type="password" placeholder="Admin password" style="padding:8px;border-radius:8px;border:1px solid #e9e9e9;width:60%;max-width:260px;">
+    <div style="margin-top:8px;">
+      <button id="enterBtn">Enter Admin</button>
+    </div>
+  </div>
+
+  <div id="changePassBox" class="card" style="display:none;">
+    <div style="margin-bottom:8px;"><strong>Change Password</strong></div>
+    <input id="oldPass" type="password" placeholder="Old password" style="padding:8px;border-radius:8px;border:1px solid #e9e9e9;width:100%;margin-bottom:8px;">
+    <input id="newPass" type="password" placeholder="New password" style="padding:8px;border-radius:8px;border:1px solid #e9e9e9;width:100%;margin-bottom:8px;">
+    <div style="display:flex; gap:8px; justify-content:center;">
+      <button id="savePassBtn">Update</button>
+      <button id="cancelPassBtn" class="ghost">Cancel</button>
+    </div>
+  </div>
+</main>
+
+<script>
+/* ---------- Keys / initial ---------- */
+const STORAGE_KEY = "menuData_simple_v2";
+const PASS_KEY = "menuPass_simple_v2";
+
+/* ---------- state ---------- */
+let isAdmin = false;
+
+/* ---------- DOM refs ---------- */
+const menuEl = document.getElementById("menu");
+const adminControls = document.getElementById("adminControls");
+const addBtn = document.getElementById("addBtn");
+const exitBtn = document.getElementById("exitBtn");
+const changePassToggle = document.getElementById("changePassToggle");
+const authArea = document.getElementById("authArea");
+const passInput = document.getElementById("passInput");
+const enterBtn = document.getElementById("enterBtn");
+const changePassBox = document.getElementById("changePassBox");
+const oldPassEl = document.getElementById("oldPass");
+const newPassEl = document.getElementById("newPass");
+const savePassBtn = document.getElementById("savePassBtn");
+const cancelPassBtn = document.getElementById("cancelPassBtn");
+
+/* ---------- password (internal only, not displayed) ---------- */
+let savedPass = localStorage.getItem(PASS_KEY) || "1234";
+
+/* ---------- helpers ---------- */
+function readMenu(){
+  try{ return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }
+  catch(e){ return []; }
+}
+function saveMenu(data){ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }
+
+/* update a single field without re-rendering the whole list (prevents keyboard hiding) */
+function updateField(index, field, value){
+  const items = readMenu();
+  if(index < 0 || index >= items.length) return;
+  items[index][field] = value;
+  saveMenu(items);
+}
+
+/* re-render full list (use after add/delete or structural changes) */
+function render(){
+  menuEl.innerHTML = "";
+  const items = readMenu();
+
+  if(items.length === 0){
+    const c = document.createElement("div");
+    c.className = "card";
+    c.style.textAlign = "center";
+    c.style.padding = "16px";
+    c.innerHTML = "<strong>No items yet — admin can add items.</strong>";
+    menuEl.appendChild(c);
+    return;
+  }
+
+  items.forEach((it, idx) => {
+    const row = document.createElement("div");
+    row.className = "item";
+
+    // thumbnail
+    const thumb = document.createElement("div"); thumb.className = "thumb";
+    const img = document.createElement("img");
+    img.alt = it.food || "food";
+    img.src = it.img || "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><rect width='100%' height='100%' fill='#f6f6f6'/><text x='50%' y='50%' fill='#ccc' font-size='12' text-anchor='middle' dy='.3em'>No Image</text></svg>`);
+    thumb.appendChild(img);
+
+    // food col
+    const colFood = document.createElement("div"); colFood.className = "col food";
+    const labFood = document.createElement("label"); labFood.textContent = "Food";
+    const inputFood = document.createElement("input"); inputFood.type = "text"; inputFood.value = it.food || "";
+    inputFood.readOnly = !isAdmin;
+    inputFood.placeholder = "Food name";
+    // update on input without re-rendering
+    inputFood.addEventListener("input", () => {
+      if(!isAdmin) return;
+      updateField(idx, "food", inputFood.value);
+    });
+    colFood.appendChild(labFood); colFood.appendChild(inputFood);
+
+    // price col
+    const colPrice = document.createElement("div"); colPrice.className = "col price";
+    const labPrice = document.createElement("label"); labPrice.textContent = "Price";
+    const inputPrice = document.createElement("input"); inputPrice.type = "text"; inputPrice.value = it.price || "";
+    inputPrice.readOnly = !isAdmin;
+    inputPrice.placeholder = "₹ 0";
+    inputPrice.addEventListener("input", () => {
+      if(!isAdmin) return;
+      updateField(idx, "price", inputPrice.value);
+    });
+    colPrice.appendChild(labPrice); colPrice.appendChild(inputPrice);
+
+    // qty col (admin-editable only)
+    const colQty = document.createElement("div"); colQty.className = "col qty";
+    const labQty = document.createElement("label"); labQty.textContent = "Qty";
+    const inputQty = document.createElement("input"); inputQty.type = "text"; inputQty.value = it.qty || "";
+    inputQty.readOnly = !isAdmin;
+    inputQty.placeholder = "Qty";
+    inputQty.addEventListener("input", () => {
+      if(!isAdmin) return;
+      updateField(idx, "qty", inputQty.value);
+    });
+    colQty.appendChild(labQty); colQty.appendChild(inputQty);
+
+    // actions (upload hidden file, upload label, delete)
+    const actions = document.createElement("div"); actions.className = "actions";
+    const hiddenImg = document.createElement("input"); hiddenImg.type = "hidden"; hiddenImg.className = "img"; hiddenImg.value = it.img || "";
+
+    // file input (hidden) + label to open gallery
+    const fileInput = document.createElement("input"); fileInput.type="file"; fileInput.accept="image/*";
+    fileInput.style.display = "none";
+    // keep file input hidden always; we'll clear its value after use to avoid showing filename anywhere
+    fileInput.addEventListener("change", (e) => {
+      const f = e.target.files && e.target.files[0];
+      if(!f){ try{ fileInput.value = ""; }catch(_){}; return; }
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const dataUrl = ev.target.result;
+        updateField(idx, "img", dataUrl); // without re-render, but we update image visually below
+        img.src = dataUrl;
+        // clear file input value — prevents "file name" persistence
+        try{ fileInput.value = ""; }catch(_){}
+      };
+      reader.readAsDataURL(f);
+    });
+
+    const uploadBtn = document.createElement("button");
+    uploadBtn.className = "ghost";
+    uploadBtn.style.display = isAdmin ? "inline-block" : "none";
+    uploadBtn.textContent = "Upload";
+    uploadBtn.onclick = () => fileInput.click();
+
+    // delete button
+    const delBtn = document.createElement("button");
+    delBtn.className = "del";
+    delBtn.style.display = isAdmin ? "inline-block" : "none";
+    delBtn.textContent = "Delete";
+    delBtn.onclick = () => {
+      if(!isAdmin) return;
+      const arr = readMenu();
+      arr.splice(idx,1);
+      saveMenu(arr);
+      render();
+    };
+
+    actions.appendChild(hiddenImg);
+    actions.appendChild(fileInput);
+    actions.appendChild(uploadBtn);
+    actions.appendChild(delBtn);
+
+    // assemble
+    row.appendChild(thumb);
+    row.appendChild(colFood);
+    row.appendChild(colPrice);
+    row.appendChild(colQty);
+    row.appendChild(actions);
+    menuEl.appendChild(row);
+  });
+}
+
+/* ---------- admin controls ---------- */
+addBtn.addEventListener("click", () => {
+  if(!isAdmin) return;
+  const arr = readMenu();
+  arr.push({ food:"", price:"", qty:"", img:"" });
+  saveMenu(arr);
+  render();
+  // focus last food input after short delay (mobile friendly)
+  setTimeout(()=> {
+    const rows = document.querySelectorAll('.item');
+    if(rows.length){
+      const last = rows[rows.length-1];
+      const fi = last.querySelector('.food input, .food input[type=text]') || last.querySelector('.food input');
+      if(fi) fi.focus();
+    }
+  }, 120);
+});
+
+/* login */
+enterBtn.addEventListener("click", ()=> {
+  const val = passInput.value || "";
+  const cur = localStorage.getItem(PASS_KEY) || savedPass;
+  if(val === cur){
+    isAdmin = true;
+    authArea.style.display = "none";
+    adminControls.style.display = "flex";
+    changePassBox.style.display = "none";
+    passInput.value = "";
+    render();
+  } else {
+    alert("Wrong password");
+  }
+});
+
+/* exit admin */
+exitBtn.addEventListener("click", ()=> {
+  isAdmin = false;
+  authArea.style.display = "block";
+  adminControls.style.display = "none";
+  changePassBox.style.display = "none";
+  render();
+});
+
+/* toggle change password */
+changePassToggle.addEventListener("click", ()=> {
+  changePassBox.style.display = (changePassBox.style.display === "block") ? "none" : "block";
+});
+
+/* save new password */
+savePassBtn.addEventListener("click", ()=> {
+  const oldv = oldPassEl.value || "";
+  const newv = newPassEl.value || "";
+  const cur = localStorage.getItem(PASS_KEY) || savedPass;
+  if(oldv !== cur){
+    alert("Old password incorrect"); return;
+  }
+  if(newv.length < 4){ alert("Use at least 4 characters"); return; }
+  localStorage.setItem(PASS_KEY, newv);
+  savedPass = newv;
+  alert("Password updated");
+  oldPassEl.value = ""; newPassEl.value = ""; changePassBox.style.display = "none";
+});
+
+/* cancel password change */
+cancelPassBtn.addEventListener("click", ()=> { changePassBox.style.display = "none"; oldPassEl.value = ""; newPassEl.value = ""; });
+
+/* ---------- init sample data if empty ---------- */
+(function init(){
+  const stored = readMenu();
+  if(stored.length === 0){
+    const sample = [
+      { food:"Pizza", price:"120", qty:"1", img:"" },
+      { food:"Burger", price:"80", qty:"1", img:"" }
+    ];
+    saveMenu(sample);
+  }
+  render();
+})();
+</script>
+</body>
+  </html>
